@@ -1,20 +1,14 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { parsePublicFileLink } from "@/lib/drive-links";
 import { toActionError } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
 import { DOCUMENT_KINDS } from "@/lib/types";
-import type { ActionState, DocumentKind } from "@/lib/types";
-
-const MAX_PDF_BYTES = 10 * 1024 * 1024;
+import type { DocumentKind, PrenatalDocument } from "@/lib/types";
 
 function readString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
-}
-
-function fileStem(name: string) {
-  return name.replace(/\.pdf$/i, "").trim();
 }
 
 async function requireUserId() {
@@ -23,10 +17,10 @@ async function requireUserId() {
   return { supabase, userId: data?.claims?.sub ?? null };
 }
 
-export async function createDocument(
-  _prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
+export async function createDocument(formData: FormData): Promise<{
+  error?: string;
+  document?: PrenatalDocument;
+}> {
   const { supabase, userId } = await requireUserId();
   if (!userId) return { error: "Sessão expirada. Entre novamente." };
 
@@ -34,82 +28,53 @@ export async function createDocument(
   const occurredOn = readString(formData, "occurred_on");
   const notes = readString(formData, "notes");
   const kind = readString(formData, "kind") as DocumentKind;
-  const file = formData.get("file");
+  const parsed = parsePublicFileLink(readString(formData, "file_url"));
 
   if (!pregnancyId || !occurredOn) {
-    return { error: "Preencha o tipo, a data e anexe o PDF." };
+    return { error: "Preencha o tipo, a data e o link do PDF." };
   }
 
   if (!DOCUMENT_KINDS.includes(kind)) {
     return { error: "Tipo de documento inválido." };
   }
 
-  if (!(file instanceof File) || file.size === 0) {
-    return { error: "Anexe o PDF do exame, ultrassom ou documento." };
+  if ("error" in parsed) {
+    return { error: parsed.error };
   }
 
-  if (file.size > MAX_PDF_BYTES) {
-    return { error: "O PDF pode ter no máximo 10 MB." };
-  }
+  const title = readString(formData, "title") || "Documento";
 
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const looksLikePdf =
-    bytes.length >= 4 &&
-    bytes[0] === 0x25 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x44 &&
-    bytes[3] === 0x46;
+  const { data, error } = await supabase
+    .from("documents")
+    .insert({
+      user_id: userId,
+      pregnancy_id: pregnancyId,
+      kind,
+      title,
+      occurred_on: occurredOn,
+      notes: notes || null,
+      drive_file_id: parsed.id,
+      file_url: parsed.url,
+    })
+    .select("*")
+    .single();
 
-  if (!looksLikePdf && !file.name.toLowerCase().endsWith(".pdf")) {
-    return { error: "Envie apenas arquivos PDF." };
-  }
-
-  const title = readString(formData, "title") || fileStem(file.name) || "Documento";
-  const fileId = crypto.randomUUID();
-  const filePath = `${userId}/${pregnancyId}/${fileId}.pdf`;
-
-  const { error: uploadError } = await supabase.storage
-    .from("documentos")
-    .upload(filePath, bytes, {
-      contentType: "application/pdf",
-      upsert: false,
-    });
-
-  if (uploadError) {
+  if (error || !data) {
     return {
       error: toActionError(
-        uploadError,
-        "Não foi possível enviar o PDF. Execute supabase/pdfs.sql no Supabase.",
+        error,
+        "Não foi possível salvar o documento. Execute supabase/drive.sql no Supabase.",
       ),
     };
   }
 
-  const { error } = await supabase.from("documents").insert({
-    user_id: userId,
-    pregnancy_id: pregnancyId,
-    kind,
-    title,
-    occurred_on: occurredOn,
-    notes: notes || null,
-    file_path: filePath,
-    file_name: file.name,
-  });
-
-  if (error) {
-    await supabase.storage.from("documentos").remove([filePath]);
-    return { error: toActionError(error, "Não foi possível salvar o documento.") };
-  }
-
-  revalidatePath("/painel");
-  return { success: "PDF adicionado à linha do tempo." };
+  return { document: data as PrenatalDocument };
 }
 
-export async function deleteDocument(formData: FormData): Promise<void> {
+export async function removePrenatalDocument(id: string): Promise<{ error?: string }> {
   const { supabase, userId } = await requireUserId();
-  if (!userId) return;
-
-  const id = readString(formData, "id");
-  if (!id) return;
+  if (!userId) return { error: "Sessão expirada. Entre novamente." };
+  if (!id) return { error: "Documento inválido." };
 
   const { data } = await supabase
     .from("documents")
@@ -123,6 +88,7 @@ export async function deleteDocument(formData: FormData): Promise<void> {
     await supabase.storage.from("documentos").remove([filePath]);
   }
 
-  await supabase.from("documents").delete().eq("id", id).eq("user_id", userId);
-  revalidatePath("/painel");
+  const { error } = await supabase.from("documents").delete().eq("id", id).eq("user_id", userId);
+  if (error) return { error: toActionError(error, "Não foi possível remover o documento.") };
+  return {};
 }

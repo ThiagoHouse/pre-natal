@@ -40,9 +40,9 @@ export function SetupNeeded() {
           </code>
           . Se o projeto já existir, rode também{" "}
           <code className="rounded bg-accent-soft px-1.5">
-            supabase/pdfs.sql
+            supabase/drive.sql
           </code>{" "}
-          para anexos PDF.
+          para guardar o link dos PDFs.
         </li>
         <li>
           <strong>4.</strong> Em Authentication, pode desativar Confirm email

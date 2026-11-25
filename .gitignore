@@ -34,6 +34,10 @@ yarn-error.log*
 .env*
 !.env.example
 
+# google service account
+*service-account*.json
+google-credentials.json
+
 # vercel
 .vercel
 

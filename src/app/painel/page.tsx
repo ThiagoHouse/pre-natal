@@ -88,9 +88,8 @@ export default async function PainelPage() {
             <section className="rounded-3xl border border-line bg-card p-6">
               <h3 className="text-lg font-semibold">Linha do tempo</h3>
               <p className="mt-1 mb-5 text-sm text-muted">
-                PDFs agrupados por mês: exames, ultrassons, vacinas e o que mais
-                o médico precisar ver. Filtre por mês ou trimestre e role os
-                arquivos para o lado.
+                Cole o link público do PDF no Google Drive. Filtre por mês ou
+                trimestre e abra o arquivo no navegador.
               </p>
               <TimelinePanel
                 pregnancyId={pregnancy.id}

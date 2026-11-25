@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { removePrenatalDocument } from "@/app/actions/documents";
 import { DocumentForm } from "@/components/document-form";
 import {
   formatDatePt,
@@ -8,6 +9,7 @@ import {
   gestationalTrimester,
   monthKey,
 } from "@/lib/gestation";
+import { documentOpenUrl } from "@/lib/drive-links";
 import { DOCUMENT_KIND_LABELS } from "@/lib/labels";
 import { createClient } from "@/lib/supabase/client";
 import { DOCUMENT_KINDS, type PrenatalDocument } from "@/lib/types";
@@ -26,7 +28,7 @@ export function Timeline({
   lastMenstrualPeriod,
 }: TimelineProps) {
   const [documents, setDocuments] = useState(serverDocuments);
-  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [legacyUrls, setLegacyUrls] = useState<Record<string, string>>({});
   const [month, setMonth] = useState("todos");
   const [trimester, setTrimester] = useState<TrimesterFilter>("todos");
 
@@ -35,12 +37,12 @@ export function Timeline({
   }, [serverDocuments]);
 
   useEffect(() => {
-    const paths = documents
-      .filter((document) => document.file_path)
-      .map((document) => ({ id: document.id, path: document.file_path as string }));
+    const legacy = documents.filter(
+      (document) => document.file_path && !documentOpenUrl(document),
+    );
 
-    if (paths.length === 0) {
-      setSignedUrls({});
+    if (legacy.length === 0) {
+      setLegacyUrls({});
       return;
     }
 
@@ -48,17 +50,15 @@ export function Timeline({
     const supabase = createClient();
 
     void Promise.all(
-      paths.map(async ({ id, path }) => {
+      legacy.map(async (document) => {
         const { data } = await supabase.storage
           .from("documentos")
-          .createSignedUrl(path, 60 * 60);
-        return [id, data?.signedUrl ?? ""] as const;
+          .createSignedUrl(document.file_path as string, 60 * 60);
+        return [document.id, data?.signedUrl ?? ""] as const;
       }),
     ).then((entries) => {
       if (cancelled) return;
-      setSignedUrls(
-        Object.fromEntries(entries.filter(([, url]) => url)),
-      );
+      setLegacyUrls(Object.fromEntries(entries.filter(([, url]) => url)));
     });
 
     return () => {
@@ -104,20 +104,12 @@ export function Timeline({
   }, [filtered]);
 
   async function removeDocument(document: PrenatalDocument) {
-    const supabase = createClient();
     setDocuments((current) => current.filter((entry) => entry.id !== document.id));
-
-    const { error } = await supabase.from("documents").delete().eq("id", document.id);
-    if (error) {
-      setDocuments((current) =>
-        [...current, document].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on)),
-      );
-      return;
-    }
-
-    if (document.file_path) {
-      await supabase.storage.from("documentos").remove([document.file_path]);
-    }
+    const result = await removePrenatalDocument(document.id);
+    if (!result.error) return;
+    setDocuments((current) =>
+      [...current, document].sort((a, b) => b.occurred_on.localeCompare(a.occurred_on)),
+    );
   }
 
   if (documents.length === 0) {
@@ -194,7 +186,8 @@ export function Timeline({
                     </p>
                     <div className="flex gap-3 overflow-x-auto pb-2">
                       {byKind.get(kind)!.map((document, index) => {
-                        const signedUrl = signedUrls[document.id];
+                        const openUrl =
+                          documentOpenUrl(document) ?? legacyUrls[document.id] ?? null;
                         return (
                           <article
                             key={document.id}
@@ -212,19 +205,17 @@ export function Timeline({
                               </p>
                             ) : null}
                             <div className="mt-3 flex items-center justify-between gap-2">
-                              {document.file_path ? (
-                                signedUrl ? (
-                                  <a
-                                    href={signedUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-sm font-medium text-accent underline"
-                                  >
-                                    Abrir PDF
-                                  </a>
-                                ) : (
-                                  <span className="text-xs text-muted">Preparando...</span>
-                                )
+                              {openUrl ? (
+                                <a
+                                  href={openUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-sm font-medium text-accent underline"
+                                >
+                                  Abrir PDF
+                                </a>
+                              ) : document.file_path ? (
+                                <span className="text-xs text-muted">Preparando...</span>
                               ) : (
                                 <span className="text-xs text-muted">Sem arquivo</span>
                               )}

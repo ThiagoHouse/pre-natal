@@ -1,9 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { toActionError } from "@/lib/errors";
+import { createDocument } from "@/app/actions/documents";
 import { DOCUMENT_KIND_LABELS } from "@/lib/labels";
-import { createClient } from "@/lib/supabase/client";
 import {
   DOCUMENT_KINDS,
   type ActionState,
@@ -12,16 +11,11 @@ import {
 } from "@/lib/types";
 
 const initialState: ActionState = {};
-const MAX_PDF_BYTES = 10 * 1024 * 1024;
 
 type DocumentFormProps = {
   pregnancyId: string;
   onCreated?: (document: PrenatalDocument) => void;
 };
-
-function fileStem(name: string) {
-  return name.replace(/\.pdf$/i, "").trim();
-}
 
 export function DocumentForm({ pregnancyId, onCreated }: DocumentFormProps) {
   const [state, setState] = useState<ActionState>(initialState);
@@ -30,113 +24,33 @@ export function DocumentForm({ pregnancyId, onCreated }: DocumentFormProps) {
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    const formData = new FormData(form);
-    const occurredOn = String(formData.get("occurred_on") ?? "").trim();
-    const notes = String(formData.get("notes") ?? "").trim();
-    const kind = String(formData.get("kind") ?? "") as DocumentKind;
-    const file = formData.get("file");
-
-    if (!occurredOn) {
-      setState({ error: "Preencha o tipo, a data e anexe o PDF." });
-      return;
-    }
-
+    const kind = String(new FormData(form).get("kind") ?? "") as DocumentKind;
     if (!DOCUMENT_KINDS.includes(kind)) {
       setState({ error: "Tipo de documento inválido." });
       return;
     }
 
-    if (!(file instanceof File) || file.size === 0) {
-      setState({ error: "Anexe o PDF do exame, ultrassom ou documento." });
-      return;
-    }
-
-    if (file.size > MAX_PDF_BYTES) {
-      setState({ error: "O PDF pode ter no máximo 10 MB." });
-      return;
-    }
-
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const looksLikePdf =
-      bytes.length >= 4 &&
-      bytes[0] === 0x25 &&
-      bytes[1] === 0x50 &&
-      bytes[2] === 0x44 &&
-      bytes[3] === 0x46;
-
-    if (!looksLikePdf && !file.name.toLowerCase().endsWith(".pdf")) {
-      setState({ error: "Envie apenas arquivos PDF." });
-      return;
-    }
-
     setPending(true);
     setState({});
-
-    const supabase = createClient();
-    const { data: sessionData } = await supabase.auth.getSession();
-    const userId = sessionData.session?.user.id;
-
-    if (!userId) {
-      setPending(false);
-      setState({ error: "Sessão expirada. Entre novamente." });
-      return;
-    }
-
-    const title =
-      String(formData.get("title") ?? "").trim() || fileStem(file.name) || "Documento";
-    const fileId = crypto.randomUUID();
-    const filePath = `${userId}/${pregnancyId}/${fileId}.pdf`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("documentos")
-      .upload(filePath, bytes, {
-        contentType: "application/pdf",
-        upsert: false,
-      });
-
-    if (uploadError) {
-      setPending(false);
-      setState({
-        error: toActionError(
-          uploadError,
-          "Não foi possível enviar o PDF. Execute supabase/pdfs.sql no Supabase.",
-        ),
-      });
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("documents")
-      .insert({
-        user_id: userId,
-        pregnancy_id: pregnancyId,
-        kind,
-        title,
-        occurred_on: occurredOn,
-        notes: notes || null,
-        file_path: filePath,
-        file_name: file.name,
-      })
-      .select("*")
-      .single();
-
-    if (error || !data) {
-      await supabase.storage.from("documentos").remove([filePath]);
-      setPending(false);
-      setState({
-        error: toActionError(error, "Não foi possível salvar o documento."),
-      });
-      return;
-    }
-
-    onCreated?.(data as PrenatalDocument);
-    form.reset();
+    const result = await createDocument(new FormData(form));
     setPending(false);
+
+    if (result.error) {
+      setState({ error: result.error });
+      return;
+    }
+
+    if (result.document) {
+      onCreated?.(result.document);
+    }
+    form.reset();
     setState({ success: "PDF adicionado à linha do tempo." });
   }
 
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2">
+      <input type="hidden" name="pregnancy_id" value={pregnancyId} />
+
       <label className="flex flex-col gap-1.5 text-sm">
         <span className="font-medium">Tipo</span>
         <select
@@ -166,20 +80,25 @@ export function DocumentForm({ pregnancyId, onCreated }: DocumentFormProps) {
         <span className="font-medium">Título</span>
         <input
           name="title"
-          placeholder="Se vazio, usa o nome do PDF"
+          placeholder="Ex.: Ultrassom morfológico"
           className="rounded-xl border border-line bg-white px-3 py-2.5 outline-none focus:border-accent"
         />
       </label>
 
       <label className="flex flex-col gap-1.5 text-sm sm:col-span-2">
-        <span className="font-medium">PDF</span>
+        <span className="font-medium">Link do PDF no Google Drive</span>
         <input
-          name="file"
-          type="file"
-          accept="application/pdf,.pdf"
+          name="file_url"
+          type="url"
           required
-          className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm file:mr-3 file:rounded-full file:border-0 file:bg-accent-soft file:px-3 file:py-1 file:text-accent"
+          placeholder="https://drive.google.com/file/d/.../view?usp=sharing"
+          className="rounded-xl border border-line bg-white px-3 py-2.5 outline-none focus:border-accent"
         />
+        <span className="text-xs text-muted">
+          No Drive: Compartilhar → Qualquer pessoa com o link → Copiar link. O
+          botão Abrir PDF abre esse arquivo no navegador, como um currículo
+          público.
+        </span>
       </label>
 
       <label className="flex flex-col gap-1.5 text-sm sm:col-span-2">
@@ -202,7 +121,7 @@ export function DocumentForm({ pregnancyId, onCreated }: DocumentFormProps) {
           disabled={pending}
           className="rounded-full bg-foreground px-4 py-2.5 text-sm font-medium text-background disabled:opacity-60"
         >
-          {pending ? "Enviando PDF..." : "Anexar à linha do tempo"}
+          {pending ? "Salvando..." : "Anexar à linha do tempo"}
         </button>
       </div>
     </form>

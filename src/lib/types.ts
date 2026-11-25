@@ -25,6 +25,8 @@ export type Pregnancy = {
   due_date: string;
   last_menstrual_period: string | null;
   notes: string | null;
+  drive_folder_id: string | null;
+  drive_folder_name: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -39,6 +41,8 @@ export type PrenatalDocument = {
   notes: string | null;
   file_path: string | null;
   file_name: string | null;
+  drive_file_id: string | null;
+  file_url: string | null;
   signed_url?: string | null;
   created_at: string;
 };

@@ -24,6 +24,8 @@ create table public.pregnancies (
   due_date date not null,
   last_menstrual_period date,
   notes text,
+  drive_folder_id text,
+  drive_folder_name text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -38,6 +40,8 @@ create table public.documents (
   notes text,
   file_path text,
   file_name text,
+  drive_file_id text,
+  file_url text,
   created_at timestamptz not null default now()
 );
 

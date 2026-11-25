@@ -34,7 +34,7 @@ export function toActionError(error: unknown, fallback: string) {
     text.includes("fetch failed")
   ) {
     const detail = parts.filter(Boolean).slice(0, 2).join(" — ");
-    return `Não foi possível conectar ao Supabase${detail ? ` (${detail})` : ""}.`;
+    return `Não foi possível conectar${detail ? ` (${detail})` : ""}.`;
   }
 
   if (
